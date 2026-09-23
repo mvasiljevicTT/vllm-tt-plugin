@@ -1201,7 +1201,9 @@ class TTLaneInputBatch(InputBatch):
             runner.requests, scheduler_output, bitmask
         )
         perform_device_sampling = runner.check_perform_device_sampling(
-            is_decode=True, has_structured_outputs=has_structured
+            is_decode=True,
+            has_structured_outputs=has_structured,
+            sampling_params=lane_batch.slot_sampling_params(occupied),
         )
 
         # The prompt/output token tensors feed device-side penalties only. Host
@@ -1293,7 +1295,9 @@ class TTLaneInputBatch(InputBatch):
             runner.requests, scheduler_output, bitmask
         )
         perform_device_sampling = runner.check_perform_device_sampling(
-            is_decode=False, has_structured_outputs=has_structured
+            is_decode=False,
+            has_structured_outputs=has_structured,
+            sampling_params=tt_sampling_params,
         )
         if intermediate_prefill_mask.any():
             # Device sampling advances device RNG state for every row it reads,

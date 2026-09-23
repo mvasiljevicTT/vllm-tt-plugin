@@ -13,6 +13,7 @@ import ttnn
 from vllm.v1.outputs import AsyncModelRunnerOutput, LogprobsLists, ModelRunnerOutput
 
 from vllm_tt_plugin.input_batch import SEED_NONE_SENTINEL
+from vllm_tt_plugin.model_input import slice_tt_sampling_params
 from vllm_tt_plugin.structured_output import has_structured_outputs
 
 if TYPE_CHECKING:
@@ -243,6 +244,9 @@ class TTAsyncDecodeController:
         return runner.check_perform_device_sampling(
             is_decode=True,
             has_structured_outputs=False,
+            sampling_params=slice_tt_sampling_params(
+                input_batch.sampling, list(range(input_batch.num_reqs))
+            ),
         )
 
     def can_attempt_steady_decode_from_scheduler(

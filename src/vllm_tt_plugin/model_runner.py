@@ -188,6 +188,16 @@ class TTModelRunner:
         self.supports_topk_logprobs = (
             self.model_config.hf_config.model_type == "gpt_oss"
         )
+        # Models with a restricted device sampler can expose a pure class-level
+        # policy hook. Resolve it before loading weights so every DP rank makes
+        # the same host/device decision, including ranks that do not own a
+        # loaded model instance.
+        from vllm.model_executor.model_loader.utils import get_model_architecture
+
+        model_class, _ = get_model_architecture(self.model_config)
+        self._supports_device_sampling = getattr(
+            model_class, "supports_device_sampling", None
+        )
 
         logger.info(
             "TTModelRunner: trace_mode=%s, "
@@ -1283,6 +1293,7 @@ class TTModelRunner:
         perform_device_sampling = self.check_perform_device_sampling(
             is_decode=not is_prompt,
             has_structured_outputs=has_structured,
+            sampling_params=slice_tt_sampling_params(sample_params, req_indices),
         )
         if intermediate_prefill_mask is not None and intermediate_prefill_mask.any():
             # Device sampling advances device RNG state for every row it reads,
@@ -1849,7 +1860,10 @@ class TTModelRunner:
         return finish(grammar_output)
 
     def check_perform_device_sampling(
-        self, is_decode: bool, has_structured_outputs: bool
+        self,
+        is_decode: bool,
+        has_structured_outputs: bool,
+        sampling_params: TTSamplingParams,
     ) -> bool:
         want_device_sampling = self.sample_on_device_mode == "all" or (
             self.sample_on_device_mode == "decode_only" and is_decode
@@ -1893,6 +1907,10 @@ class TTModelRunner:
                 return False
             if max_lp > 0 and not self.supports_topk_logprobs:
                 return False
+
+        supports_device_sampling = self._supports_device_sampling
+        if supports_device_sampling is not None:
+            return bool(supports_device_sampling(sampling_params, is_decode=is_decode))
 
         return True
 
