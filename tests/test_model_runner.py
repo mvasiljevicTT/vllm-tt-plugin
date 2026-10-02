@@ -3,6 +3,7 @@
 """Host-only tests for ``TTModelRunner`` (non-lane path)."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from vllm.sampling_params import SamplingParams
@@ -65,6 +66,7 @@ def _fake_runner(batch: InputBatch, request: CachedRequestState) -> SimpleNamesp
         tt_data_parallel_size=DP_SIZE,
         max_num_blocks_per_req=MAX_MODEL_LEN // BLOCK_SIZE,
         model_config=SimpleNamespace(is_multimodal_model=False),
+        model=SimpleNamespace(model_capabilities={}),
         check_perform_device_sampling=lambda **_: False,
         _block_tables_per_layer=lambda _: None,
         _alloc_prefill_state_slots=lambda row_req_ids: list(range(len(row_req_ids))),
@@ -183,6 +185,42 @@ def test_resumed_replay_past_prompt_length_remains_prefill():
 
 
 # endregion Prefill classification
+
+
+@pytest.mark.parametrize("capability", [None, False, True])
+@pytest.mark.parametrize("computed", [2, 6])
+@pytest.mark.parametrize("device_eligible", [False, True])
+def test_chunked_prefill_device_sampling_opt_in(capability, computed, device_eligible):
+    """Route real prepared chunks and submit the mask only to opted-in models."""
+    batch, request = _batch_with_one_request(8, 0, computed)
+    runner = _fake_runner(batch, request)
+    if capability is not None:
+        runner.model.model_capabilities["supports_device_chunked_prefill"] = capability
+    runner.check_perform_device_sampling = lambda **_: device_eligible
+    runner.model.prefill_forward = Mock(return_value=object())
+    runner.async_decode = SimpleNamespace(note_prefill_submitted=Mock())
+    runner.kv_caches = []
+    runner.trace_mode = "all"
+    runner.request_specific_rope = False
+
+    model_input = _prepare(runner, ("r", 2, computed, 0))
+    intermediate = computed + 2 < 8
+    expected_device = device_eligible and (not intermediate or capability is True)
+    assert model_input.perform_device_sampling is expected_device
+    assert model_input.intermediate_prefill_mask.tolist() == [intermediate]
+
+    result = TTModelRunner.submit_prefill(runner, model_input, [1])
+    assert result is runner.model.prefill_forward.return_value
+    kwargs = runner.model.prefill_forward.call_args.kwargs
+    assert ("sampling_params" in kwargs) is expected_device
+    if capability is True:
+        assert (
+            kwargs["intermediate_prefill_mask"] is model_input.intermediate_prefill_mask
+        )
+    else:
+        assert "intermediate_prefill_mask" not in kwargs
+    runner.async_decode.note_prefill_submitted.assert_called_once_with()
+
 
 # region Decode input construction
 

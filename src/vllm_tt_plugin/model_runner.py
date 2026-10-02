@@ -2102,7 +2102,13 @@ class TTModelRunner:
             has_structured_outputs=has_structured,
             sampling_rows=req_indices,
         )
-        if intermediate_prefill_mask is not None and intermediate_prefill_mask.any():
+        if (
+            intermediate_prefill_mask is not None
+            and intermediate_prefill_mask.any()
+            and not self.model.model_capabilities.get(
+                "supports_device_chunked_prefill", False
+            )
+        ):
             # Device sampling advances device RNG state for every row it reads,
             # which an intermediate chunk must not do. Host sampling can hand
             # those rows a generator clone instead.
@@ -3082,6 +3088,8 @@ class TTModelRunner:
         if model_input.block_tables_per_layer is not None:
             kwargs["page_tables_per_layer"] = model_input.block_tables_per_layer
         kwargs.update(model_input.multi_modal_kwargs)
+        if self.model.model_capabilities.get("supports_device_chunked_prefill", False):
+            kwargs["intermediate_prefill_mask"] = model_input.intermediate_prefill_mask
         if model_input.perform_device_sampling:
             sampling_params = model_input.tt_sampling_params
             sampling_param_dict = {
