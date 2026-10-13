@@ -165,6 +165,31 @@ def test_accepting_the_decode_remap_advances_the_ownership_map():
     assert r._req_state_slot["A"] == 0 and r._req_state_slot["B"] == 1
 
 
+@pytest.mark.parametrize(
+    "old_slot,rows,expected", [(0, ["NEW", "OLD"], [1, 0]), (1, ["OLD", "NEW"], [1, 0])]
+)
+def test_mixed_cached_prefill_preserves_continuation_history(old_slot, rows, expected):
+    """A cached arrival must not inherit a continuing chunk's private history."""
+    r = _runner()
+    r.requests = {"OLD": None}
+    r._req_state_slot = {"OLD": old_slot}
+    history = {old_slot: ("OLD", 17024)}
+    slots = _prefill(r, rows)
+    assert slots == expected
+    for req_id, slot in zip(rows, slots):
+        if req_id == "OLD":
+            assert history[slot] == ("OLD", 17024)
+        else:
+            assert slot not in history  # Restore this request's 640 cached tokens.
+            history[slot] = ("NEW", 4224)
+    assert r._req_state_slot["OLD"] == old_slot
+    remap = _decode(r, rows)
+    state = [None] * SLOTS
+    for slot, (req_id, _) in history.items():
+        state[slot] = req_id
+    _assert_state_found(r, _gather(state, remap))
+
+
 def test_release_keeps_a_merely_unscheduled_request():
     """Every prefill step leaves the whole decode batch unscheduled, and that state is
     still live. The release predicate must not read "unscheduled" as "dead"."""
